@@ -1,6 +1,6 @@
 const express = require('express');
 const app = express();
-const port = process.evn.port || 8000
+const port = process.env.PORT || 8000;
 
 app.get('/', (req, res) => {
   res.send('homepade fucker');

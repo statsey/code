@@ -1,9 +1,8 @@
-import { randomBytes, createHash } from "node:crypto";
+const { randomBytes } = require("node:crypto");
 
 function generateApiKey() {
   try {
-    const apiKey = `sk_live_statsey:${randomBytes(64).toString("hex")}`;
-    return apiKey;
+    return `sk_live_statsey:${randomBytes(64).toString("hex")}`;
   } catch (error) {
     return undefined;
   }
@@ -11,4 +10,4 @@ function generateApiKey() {
 
 module.exports = {
   generateApiKey
-}
+};
