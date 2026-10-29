@@ -11,6 +11,8 @@ app.use(express.json());
 const cors = require("cors");
 app.use(cors());
 
+app.use("/api/auth", require("../routes/auth"));
+
 app.listen(port, () => {
   console.log(`Server started on the port something idfk ${port}`);
 });
