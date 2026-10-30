@@ -12,7 +12,7 @@ const cors = require("cors");
 app.use(cors());
 
 app.use("/api/auth", require("../routes/auth"));
-
+app.use("/api/projects", require("../routes/project"));
 app.listen(port, () => {
   console.log(`Server started on the port something idfk ${port}`);
 });

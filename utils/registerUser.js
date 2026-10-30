@@ -22,7 +22,8 @@ async function registerUser(email, handle) {
   const userData = {
     handle: isHandleValid ? handle : undefined,
     email: isEmailValid ? email : undefined,
-    apikey: apiKey
+    apikey: apiKey,
+    projectIds: []
   };
   const identity = isHandleValid ? handle : email;
   const userEntriesPath = path.join(userEntriesDirectory, `${encodeURIComponent(identity)}.json`);

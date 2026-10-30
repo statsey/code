@@ -1,6 +1,6 @@
 const path = require("node:path");
 const { timingSafeEqual } = require("node:crypto");
-const { readdir, readFile } = require("node:fs/promises");
+const { readdir, readFile, writeFile } = require("node:fs/promises");
 
 const userEntriesDirectory = path.resolve(__dirname, "..", "user_meta");
 const tokenPattern = /^sk_live_statsey:[a-f0-9]{128}$/;
@@ -29,7 +29,7 @@ function tokensMatch(left, right) {
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }
 
-async function getUserInfoFromToken(value) {
+async function findUserEntryFromToken(value) {
   const token = normalizeToken(value);
   if (!hasValidTokenFormat(token)) {
     return null;
@@ -52,8 +52,9 @@ async function getUserInfoFromToken(value) {
     }
 
     let userInfo;
+    const entryPath = path.join(userEntriesDirectory, entry.name);
     try {
-      const contents = await readFile(path.join(userEntriesDirectory, entry.name), "utf8");
+      const contents = await readFile(entryPath, "utf8");
       userInfo = JSON.parse(contents);
     } catch {
       // Ignore malformed metadata files and continue looking for the token.
@@ -64,11 +65,46 @@ async function getUserInfoFromToken(value) {
       continue;
     }
 
-    const { apikey, ...safeUserInfo } = userInfo;
-    return safeUserInfo;
+    return { entryPath, userInfo };
   }
 
   return null;
+}
+
+function withoutApiKey(userInfo) {
+  const { apikey, ...safeUserInfo } = userInfo;
+  return safeUserInfo;
+}
+
+async function getUserInfoFromToken(value) {
+  const userEntry = await findUserEntryFromToken(value);
+  return userEntry ? withoutApiKey(userEntry.userInfo) : null;
+}
+
+async function addProjectIdToUser(value, projectId) {
+  if (typeof projectId !== "string" || !/^[a-f0-9]{32}$/.test(projectId)) {
+    throw new TypeError("Invalid project ID");
+  }
+
+  const userEntry = await findUserEntryFromToken(value);
+  if (!userEntry) {
+    return null;
+  }
+
+  const currentProjectIds = Array.isArray(userEntry.userInfo.projectIds)
+    ? userEntry.userInfo.projectIds.filter((id) => typeof id === "string")
+    : [];
+  const projectIds = currentProjectIds.includes(projectId)
+    ? currentProjectIds
+    : [...currentProjectIds, projectId];
+
+  const updatedUserInfo = {
+    ...userEntry.userInfo,
+    projectIds
+  };
+  await writeFile(userEntry.entryPath, JSON.stringify(updatedUserInfo), "utf8");
+
+  return withoutApiKey(updatedUserInfo);
 }
 
 async function validateToken(value) {
@@ -78,6 +114,7 @@ async function validateToken(value) {
 module.exports = {
   getUserInfoFromToken,
   getUserInfo: getUserInfoFromToken,
+  addProjectIdToUser,
   validateToken,
   normalizeToken
 };
