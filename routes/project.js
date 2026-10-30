@@ -8,8 +8,24 @@ const {
   addProjectIdToUser,
   getUserInfoFromToken
 } = require("../utils/token.js");
+const { executeProjectQuery } = require("../utils/queryProject.js");
+const {
+  appendTransaction,
+  getRequestSource,
+  getSafeActor
+} = require("../utils/transactions.js");
+const { createRateLimiter } = require("../utils/rateLimit.js");
 
-router.post("/add", async (req, res) => {
+const projectCreationRateLimit = createRateLimiter({
+  limit: 10,
+  windowMs: 60_000
+});
+const queryRateLimit = createRateLimiter({
+  limit: 20,
+  windowMs: 60_000
+});
+
+router.post("/add", projectCreationRateLimit, async (req, res) => {
   try {
     const authorization = req.get("authorization");
     const userInfo = await getUserInfoFromToken(authorization);
@@ -50,6 +66,75 @@ router.post("/add", async (req, res) => {
     console.error("Project creation error:", error);
     return res.status(500).json({
       message: "Unable to create project"
+    });
+  }
+});
+
+router.post("/action", queryRateLimit, async (req, res) => {
+  try {
+    const authorization = req.get("authorization");
+    const userInfo = await getUserInfoFromToken(authorization);
+
+    if (!userInfo) {
+      return res.status(401).json({
+        message: "Invalid or missing token"
+      });
+    }
+
+    const { command, params, projectId } = req.body || {};
+    if (
+      typeof projectId !== "string" ||
+      !Array.isArray(userInfo.projectIds) ||
+      !userInfo.projectIds.includes(projectId)
+    ) {
+      return res.status(403).json({
+        message: "You do not have access to this project"
+      });
+    }
+
+    const result = await executeProjectQuery(projectId, command, params);
+    let transaction = null;
+    let transactionLogError = null;
+
+    if (result.queryType === "write") {
+      try {
+        transaction = await appendTransaction(projectId, {
+          actor: getSafeActor(userInfo),
+          source: getRequestSource(req),
+          change: {
+            command: command.trim(),
+            params: params || []
+          },
+          result: {
+            durationMs: result.durationMs,
+            affectedRows: result.affectedRows,
+            affectedColumns: result.affectedColumns,
+            lastInsertRowid: result.lastInsertRowid || null
+          }
+        });
+      } catch (error) {
+        console.error("Transaction log error:", error);
+        transactionLogError = "The database change succeeded, but its transaction could not be logged";
+      }
+    }
+
+    return res.status(200).json({
+      message: "Query executed successfully",
+      projectId,
+      ...result,
+      transaction,
+      ...(transactionLogError ? { transactionLogError } : {})
+    });
+  } catch (error) {
+    if (Number.isInteger(error.statusCode)) {
+      return res.status(error.statusCode).json({
+        message: error.message
+      });
+    }
+
+    console.error("Project action error:", error);
+    return res.status(500).json({
+      message: "Unable to execute project action"
     });
   }
 });
