@@ -1,9 +1,11 @@
 const path = require("node:path");
-const { timingSafeEqual } = require("node:crypto");
+const { createHash, timingSafeEqual } = require("node:crypto");
 const { readdir, readFile, writeFile } = require("node:fs/promises");
+const { generateApiKey } = require("./keys.js");
 
 const userEntriesDirectory = path.resolve(__dirname, "..", "user_meta");
 const tokenPattern = /^sk_live_statsey:[a-f0-9]{128}$/;
+const apiKeyRotationQueues = new Map();
 
 function normalizeToken(value) {
   if (typeof value !== "string") {
@@ -107,6 +109,47 @@ async function addProjectIdToUser(value, projectId) {
   return withoutApiKey(updatedUserInfo);
 }
 
+async function rotateApiKey(value) {
+  const token = normalizeToken(value);
+  if (!hasValidTokenFormat(token)) {
+    return null;
+  }
+
+  const queueKey = createHash("sha256").update(token).digest("hex");
+  const previous = apiKeyRotationQueues.get(queueKey) || Promise.resolve();
+  const operation = previous.catch(() => {}).then(async () => {
+    const userEntry = await findUserEntryFromToken(token);
+    if (!userEntry) {
+      return null;
+    }
+
+    const apiKey = generateApiKey();
+    if (!apiKey) {
+      throw new Error("Unable to generate an API key");
+    }
+
+    const updatedUserInfo = {
+      ...userEntry.userInfo,
+      apikey: apiKey
+    };
+    await writeFile(userEntry.entryPath, JSON.stringify(updatedUserInfo), "utf8");
+
+    return {
+      apikey: apiKey,
+      userInfo: withoutApiKey(updatedUserInfo)
+    };
+  });
+
+  const trackedOperation = operation.finally(() => {
+    if (apiKeyRotationQueues.get(queueKey) === trackedOperation) {
+      apiKeyRotationQueues.delete(queueKey);
+    }
+  });
+  apiKeyRotationQueues.set(queueKey, trackedOperation);
+
+  return trackedOperation;
+}
+
 async function validateToken(value) {
   return (await getUserInfoFromToken(value)) !== null;
 }
@@ -115,6 +158,7 @@ module.exports = {
   getUserInfoFromToken,
   getUserInfo: getUserInfoFromToken,
   addProjectIdToUser,
+  rotateApiKey,
   validateToken,
   normalizeToken
 };
