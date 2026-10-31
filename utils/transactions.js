@@ -64,6 +64,10 @@ function getSafeActor(userInfo) {
   };
 }
 
+async function getTransactions(projectId) {
+  return readTransactions(getTransactionsPath(projectId));
+}
+
 async function appendTransaction(projectId, details) {
   const transactionsPath = getTransactionsPath(projectId);
   const previous = transactionQueues.get(projectId) || Promise.resolve();
@@ -91,6 +95,7 @@ async function appendTransaction(projectId, details) {
 }
 
 module.exports = {
+  getTransactions,
   appendTransaction,
   getRequestSource,
   getSafeActor

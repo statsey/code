@@ -10,6 +10,7 @@ const {
 } = require("../utils/token.js");
 const { executeProjectQuery } = require("../utils/queryProject.js");
 const {
+  getTransactions,
   appendTransaction,
   getRequestSource,
   getSafeActor
@@ -22,6 +23,10 @@ const projectCreationRateLimit = createRateLimiter({
 });
 const queryRateLimit = createRateLimiter({
   limit: 20,
+  windowMs: 60_000
+});
+const transactionReadRateLimit = createRateLimiter({
+  limit: 60,
   windowMs: 60_000
 });
 
@@ -66,6 +71,44 @@ router.post("/add", projectCreationRateLimit, async (req, res) => {
     console.error("Project creation error:", error);
     return res.status(500).json({
       message: "Unable to create project"
+    });
+  }
+});
+
+router.get("/:projectId/transactions", transactionReadRateLimit, async (req, res) => {
+  try {
+    const authorization = req.get("authorization");
+    const userInfo = await getUserInfoFromToken(authorization);
+
+    if (!userInfo) {
+      return res.status(401).json({
+        message: "Invalid or missing token"
+      });
+    }
+
+    const { projectId } = req.params;
+    if (!Array.isArray(userInfo.projectIds) || !userInfo.projectIds.includes(projectId)) {
+      return res.status(403).json({
+        message: "You do not have access to this project"
+      });
+    }
+
+    const transactions = await getTransactions(projectId);
+    return res.status(200).json({
+      projectId,
+      count: transactions.length,
+      transactions
+    });
+  } catch (error) {
+    if (error instanceof TypeError) {
+      return res.status(400).json({
+        message: error.message
+      });
+    }
+
+    console.error("Transaction history error:", error);
+    return res.status(500).json({
+      message: "Unable to read transaction history"
     });
   }
 });
