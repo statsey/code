@@ -1,5 +1,15 @@
+const path = require('node:path');
+const { loadEnvFile } = require('node:process');
 const express = require('express');
 const { createRateLimiter } = require('../utils/rateLimit.js');
+
+try {
+  loadEnvFile(path.resolve(__dirname, ".env"));
+} catch (error) {
+  if (error.code !== "ENOENT") {
+    throw error;
+  }
+}
 const app = express();
 const port = process.env.PORT || 8000;
 

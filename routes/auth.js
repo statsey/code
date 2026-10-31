@@ -13,7 +13,7 @@ const keyRotationRateLimit = createRateLimiter({
 });
 
 router.post("/register", async (req, res) => {
-  const { email, handle } = req.body;
+  const { email, handle } = req.body || {};
 
   if (!email && !handle) {
     return res.status(400).json({
@@ -45,15 +45,16 @@ router.post("/rotate-key", keyRotationRateLimit, async (req, res) => {
     }
 
     return res.status(200).json({
-      message: "API key rotated successfully",
-      apikey: result.apikey,
+      message: "API key rotated and sent by email",
       user: result.userInfo
     });
   } catch (error) {
     console.error("API key rotation error:", error);
 
-    return res.status(500).json({
-      message: "Unable to rotate API key"
+    return res.status(Number.isInteger(error.statusCode) ? error.statusCode : 500).json({
+      message: Number.isInteger(error.statusCode)
+        ? error.message
+        : "Unable to rotate API key"
     });
   }
 });

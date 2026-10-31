@@ -1,6 +1,7 @@
 const path = require("node:path");
-const { mkdir, writeFile } = require("node:fs/promises");
+const { mkdir, rm, writeFile } = require("node:fs/promises");
 const { generateApiKey } = require("./keys.js");
+const { sendApiKeyEmail } = require("./email.js");
 
 const userEntriesDirectory = path.resolve(__dirname, "..", "user_meta");
 
@@ -10,8 +11,11 @@ async function registerUser(email, handle) {
   const isHandleValid = typeof handle === "string" && handlePattern.test(handle);
   const isEmailValid = typeof email === "string" && emailPattern.test(email);
 
-  if (!isEmailValid && !isHandleValid) {
-    return { message: "Enter a valid email or handle", statusCode: 400 };
+  if (!isEmailValid) {
+    return {
+      message: "A valid email is required to receive the API key",
+      statusCode: 400
+    };
   }
 
   const apiKey = generateApiKey();
@@ -28,18 +32,33 @@ async function registerUser(email, handle) {
   const identity = isHandleValid ? handle : email;
   const userEntriesPath = path.join(userEntriesDirectory, `${encodeURIComponent(identity)}.json`);
 
+  let userFileCreated = false;
   try {
     await mkdir(userEntriesDirectory, { recursive: true });
     await writeFile(userEntriesPath, JSON.stringify(userData), { flag: "wx" });
+    userFileCreated = true;
+
+    await sendApiKeyEmail({
+      to: email,
+      apiKey,
+      handle: isHandleValid ? handle : undefined,
+      purpose: "registration"
+    });
 
     return {
-      message: "user registered successfully",
-      apikey: apiKey,
+      message: "User registered successfully. The API key was sent by email.",
       statusCode: 200
     };
   } catch (error) {
+    if (userFileCreated) {
+      await rm(userEntriesPath, { force: true }).catch(() => {});
+    }
+
     if (error.code === "EEXIST") {
       return { message: "This User already exists", statusCode: 409 };
+    }
+    if (Number.isInteger(error.statusCode)) {
+      return { message: error.message, statusCode: error.statusCode };
     }
 
     return {

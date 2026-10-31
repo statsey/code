@@ -2,6 +2,7 @@ const path = require("node:path");
 const { createHash, timingSafeEqual } = require("node:crypto");
 const { readdir, readFile, writeFile } = require("node:fs/promises");
 const { generateApiKey } = require("./keys.js");
+const { sendApiKeyEmail } = require("./email.js");
 
 const userEntriesDirectory = path.resolve(__dirname, "..", "user_meta");
 const tokenPattern = /^sk_live_statsey:[a-f0-9]{128}$/;
@@ -128,6 +129,13 @@ async function rotateApiKey(value) {
       throw new Error("Unable to generate an API key");
     }
 
+    await sendApiKeyEmail({
+      to: userEntry.userInfo.email,
+      apiKey,
+      handle: userEntry.userInfo.handle,
+      purpose: "rotation"
+    });
+
     const updatedUserInfo = {
       ...userEntry.userInfo,
       apikey: apiKey
@@ -135,7 +143,6 @@ async function rotateApiKey(value) {
     await writeFile(userEntry.entryPath, JSON.stringify(updatedUserInfo), "utf8");
 
     return {
-      apikey: apiKey,
       userInfo: withoutApiKey(updatedUserInfo)
     };
   });

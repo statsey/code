@@ -19,10 +19,35 @@ Content-Type: application/json
 
 CORS is enabled for all origins by the server's default CORS configuration.
 
+## SMTP configuration
+
+The server loads `src/.env` automatically when the file exists and uses Google
+SMTP by default:
+
+| Variable | Required | Default | Description |
+| --- | --- | --- | --- |
+| `SMTP_HOST` | No | `smtp.gmail.com` | Must remain `smtp.gmail.com`. |
+| `SMTP_PORT` | No | `465` | Gmail SMTP port. Port `587` can be used with `SMTP_SECURE=false`. |
+| `SMTP_SECURE` | No | `true` for port `465` | Use TLS-on-connect for port `465`. |
+| `SMTP_USER` | Yes | — | Gmail address used to send mail. |
+| `SMTP_PASS` | Yes | — | Google App Password, not the normal Google account password. |
+| `SMTP_FROM` | No | `SMTP_USER` | Sender address. |
+
+Gmail setup:
+
+1. Enable 2-Step Verification on the Google account.
+2. Create a Google App Password for this application.
+3. Put the 16-character App Password in `SMTP_PASS`.
+4. Never commit `src/.env` or expose the App Password.
+
+Use `src/.env.example` as the configuration template. API keys are delivered
+by email and are never included in HTTP responses.
+
 ## Authentication
 
-Protected endpoints use the API key returned by `POST /api/auth/register`.
-Pass it in the `Authorization` header. The recommended form is:
+Protected endpoints use the API key delivered by `POST /api/auth/register` or
+`POST /api/auth/rotate-key`. Pass it in the `Authorization` header. The
+recommended form is:
 
 ```http
 Authorization: Bearer sk_live_statsey:<128 hexadecimal characters>
@@ -46,7 +71,7 @@ with status `401 Unauthorized`.
 | Method | Path | Authentication | Description |
 | --- | --- | --- | --- |
 | `GET` | `/` | No | Returns the server's root text response. |
-| `POST` | `/api/auth/register` | No | Registers a user and creates an API key. |
+| `POST` | `/api/auth/register` | No | Registers a user and emails an API key. |
 | `GET` | `/api/auth/userinfo` | Yes | Returns the authenticated user's metadata. |
 | `POST` | `/api/auth/rotate-key` | Yes | Replaces the current API key and invalidates the old one. |
 | `POST` | `/api/projects/add` | Yes | Creates a project and associates it with the user. |
@@ -109,9 +134,9 @@ homepade fucker
 
 ## `POST /api/auth/register`
 
-Creates a user record and returns a new API key. At least one of `email` or
-`handle` must be supplied. If both values are supplied, each value is stored
-only when it passes its own validation.
+Creates a user record and emails a new API key. A valid `email` is required so
+the key has a delivery destination. `handle` is optional; if supplied, it is
+stored only when it passes validation.
 
 ### Request body
 
@@ -126,8 +151,8 @@ Fields:
 
 | Field | Type | Required | Constraints |
 | --- | --- | --- | --- |
-| `email` | string | At least one of `email` or `handle` | Must match the server's email pattern. |
-| `handle` | string | At least one of `email` or `handle` | 3–16 characters; letters, numbers, `_`, and `-` only. |
+| `email` | string | Yes | Must match the server's email pattern. The API key is sent here. |
+| `handle` | string | No | 3–16 characters; letters, numbers, `_`, and `-` only. |
 
 The registration identity is the valid handle when one is supplied; otherwise
 it is the valid email. Registering the same identity again returns a conflict.
@@ -138,21 +163,22 @@ Status: `200 OK`
 
 ```json
 {
-  "message": "user registered successfully",
-  "apikey": "sk_live_statsey:7f...128 hexadecimal characters...",
+  "message": "User registered successfully. The API key was sent by email.",
   "statusCode": 200
 }
 ```
 
-The `apikey` value is returned only at registration time by this endpoint.
+The API key is never returned by this endpoint. It is sent to the supplied
+email address instead.
 
 ### Errors
 
 | Status | Condition | Response |
 | --- | --- | --- |
-| `400` | A JSON object contains neither field, or neither supplied value is valid. | `{ "message": "Twin, add your handle or email" }` when neither field is supplied; otherwise `{ "message": "Enter a valid email or handle", "statusCode": 400 }`. |
+| `400` | No fields are supplied, the email is missing, or the email is invalid. | `{ "message": "Twin, add your handle or email" }` when no fields are supplied; otherwise `{ "message": "A valid email is required to receive the API key", "statusCode": 400 }` |
 | `409` | The registration identity already exists. | `{ "message": "This User already exists", "statusCode": 409 }` |
-| `500` | API-key generation or user-file creation fails. | `{ "message": "Unable to generate an API key" }`, or `{ "message": "An error occurred while registering the user" }` / `{ "message": "Internal server error" }` depending on the failure. |
+| `500` | API-key generation or user-file creation fails. | `{ "message": "Unable to generate an API key" }`, or `{ "message": "An error occurred while registering the user" }` depending on the failure. |
+| `503` | SMTP is not configured or the key email could not be delivered. | `{ "message": "SMTP is not configured..." }` or `{ "message": "Unable to deliver the API key email" }` |
 
 The `statusCode` property in the successful and validation/conflict responses
 is part of the current response body, in addition to the HTTP status.
@@ -216,8 +242,7 @@ Status: `200 OK`
 
 ```json
 {
-  "message": "API key rotated successfully",
-  "apikey": "sk_live_statsey:<new-128-character-hex-key>",
+  "message": "API key rotated and sent by email",
   "user": {
     "handle": "ada_lovelace",
     "email": "ada@example.com",
@@ -228,8 +253,9 @@ Status: `200 OK`
 }
 ```
 
-The replacement key is returned only in this response. It is not included in
-`/api/auth/userinfo`, and the previous key cannot be used again.
+The replacement key is emailed to the user's registered email address. It is
+not included in this response or `/api/auth/userinfo`, and the previous key
+cannot be used again.
 
 ### Errors
 
@@ -237,7 +263,9 @@ The replacement key is returned only in this response. It is not included in
 | --- | --- | --- |
 | `401` | The API key is missing, malformed, or no longer valid. | `{ "message": "Invalid or missing token" }` |
 | `429` | More than five rotations are requested in 60 seconds. | `{ "message": "Rate limit exceeded", "retryAfterSeconds": 42 }` |
+| `400` | The user has no valid email address for key delivery. | `{ "message": "A valid email address is required to deliver the API key" }` |
 | `500` | A replacement key cannot be generated or the user metadata cannot be updated. | `{ "message": "Unable to rotate API key" }` |
+| `503` | SMTP is not configured or the replacement key could not be delivered. | `{ "message": "SMTP is not configured..." }` or `{ "message": "Unable to deliver the API key email" }` |
 
 ### Example
 
